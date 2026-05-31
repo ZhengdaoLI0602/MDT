@@ -1,0 +1,90 @@
+# LedgerPilot 本地账本原型
+
+这是一个 Windows 可开发、iPhone/iPad 可使用的本地优先 PWA 原型。它避开了 iOS 原生 App 必须依赖 macOS/Xcode 的限制，同时保留以后迁移到 SwiftUI 原生 App 的核心流程。
+
+## 已实现的核心规则
+
+- 微信/支付宝截图 OCR、银行短信、银行邮件、Apple Pay 交易和账单导入都先进入“待确认账单箱”。
+- 确认前可以修改金额、商户、时间、渠道、分类、备注和原始文本。
+- 微信/支付宝账单导入不会直接覆盖已有记录。
+- 疑似重复记录会进入重复审查，可以选择保留已有、合并、两条都保留、用新记录替换或忽略。
+- 手动记账可以直接入账，也可以先放进待确认箱。
+- 还款提醒支持每月固定日期和提前提醒天数，并可导出日历 `.ics` 文件。
+- 数据默认保存在当前浏览器的 `localStorage`，不上传到服务器。
+
+## 在 Windows 本地运行
+
+在 `LedgerPilot` 文件夹中启动一个静态服务器：
+
+```powershell
+python -m http.server 8787
+```
+
+然后打开：
+
+```text
+http://localhost:8787
+```
+
+如果要在 iPhone/iPad 上访问，把电脑和 iPhone/iPad 放在同一 Wi-Fi 下，用电脑局域网 IP 访问，例如：
+
+```text
+http://192.168.1.20:8787
+```
+
+这种方式适合测试。要获得更接近 App 的体验，可以把这个静态目录部署到 GitHub Pages、Cloudflare Pages 或其他 HTTPS 静态托管，再在 iPhone/iPad Safari 中“添加到主屏幕”。这些平台有免费额度。
+
+## 快捷指令接入方式
+
+PWA 支持通过 URL 写入待确认记录：
+
+```text
+https://你的地址/index.html?intent=bankMessage&text=短信或邮件正文
+```
+
+可用 `intent`：
+
+- `bankMessage`：银行短信
+- `bankEmail`：银行邮件
+- `applePay`：Apple Pay 交易
+- `wechatOcr`：微信截图 OCR
+- `alipayOcr`：支付宝截图 OCR
+
+也可以直接传结构化字段：
+
+```text
+https://你的地址/index.html?intent=applePay&amount=35.8&merchant=Starbucks&time=2026-05-31T12:30
+```
+
+所有 URL 进入的记录都会先进入待确认箱。
+
+## iOS 快捷指令建议
+
+截图 OCR：
+
+1. 截取微信/支付宝支付成功页。
+2. 快捷指令读取最新截图。
+3. 使用“从图像中提取文本”。
+4. 对文本进行 URL 编码。
+5. 打开 `...?intent=wechatOcr&text=编码后的文本` 或 `...?intent=alipayOcr&text=编码后的文本`。
+
+银行短信/邮件：
+
+1. 建立个人自动化，触发条件为指定银行短信或邮件。
+2. 条件包含“支付宝”“财付通”“快捷支付”“支出”“消费”等关键词。
+3. 取短信或邮件正文。
+4. 打开 `...?intent=bankMessage&text=编码后的正文`。
+
+Apple Pay：
+
+1. 建立“交易”自动化。
+2. 把交易商户、金额和时间拼成文本，或分别传 `amount`、`merchant`、`time`。
+3. 打开 `...?intent=applePay...`。
+
+## Windows-only 开发限制
+
+只用 Windows 可以继续开发这个 PWA 版本，但不能完整开发和签名原生 iOS App。原生 SwiftUI、App Intents、Share Extension 和 TestFlight/App Store 打包都需要 macOS + Xcode。没有 Mac 时的低成本路径是：
+
+- 先用本 PWA 完成业务流程和数据模型。
+- 后续需要原生 iOS 能力时，再用 Mac、云 Mac 或 GitHub Actions/macOS runner 做打包。
+- 如果只是自己使用，PWA 路线可以长期保留，不必上架 App Store。

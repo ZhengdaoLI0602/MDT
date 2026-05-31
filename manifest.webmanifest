@@ -1,0 +1,10 @@
+{
+  "name": "LedgerPilot 本地账本",
+  "short_name": "LedgerPilot",
+  "description": "本地优先的待确认记账工具，支持快捷指令、账单导入和还款提醒。",
+  "start_url": "./index.html",
+  "display": "standalone",
+  "background_color": "#f8fafc",
+  "theme_color": "#f8fafc",
+  "icons": []
+}

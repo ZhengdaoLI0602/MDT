@@ -1,0 +1,296 @@
+<!doctype html>
+<html lang="zh-Hans">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="theme-color" content="#f8fafc" />
+    <title>LedgerPilot 本地账本</title>
+    <link rel="manifest" href="manifest.webmanifest" />
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <header class="app-header">
+      <div>
+        <p class="eyebrow">本地优先 · 待确认入账</p>
+        <h1>LedgerPilot</h1>
+      </div>
+      <div class="header-actions">
+        <button class="secondary" id="exportJsonButton" type="button">导出备份</button>
+        <label class="secondary file-label">
+          导入备份
+          <input id="backupInput" type="file" accept="application/json,.json" />
+        </label>
+      </div>
+    </header>
+
+    <main class="shell">
+      <section class="summary-grid" aria-label="账本概览">
+        <article class="summary-card">
+          <span>本月支出</span>
+          <strong id="monthExpense">￥0.00</strong>
+        </article>
+        <article class="summary-card">
+          <span>待确认</span>
+          <strong id="pendingCount">0</strong>
+        </article>
+        <article class="summary-card warn">
+          <span>疑似重复</span>
+          <strong id="duplicateCount">0</strong>
+        </article>
+        <article class="summary-card">
+          <span>最近还款提醒</span>
+          <strong id="nextReminder">暂无</strong>
+        </article>
+      </section>
+
+      <nav class="tabs" aria-label="功能切换">
+        <button class="tab-button active" data-tab="pending" type="button">待确认</button>
+        <button class="tab-button" data-tab="ledger" type="button">账本</button>
+        <button class="tab-button" data-tab="manual" type="button">手动记账</button>
+        <button class="tab-button" data-tab="capture" type="button">快捷入口</button>
+        <button class="tab-button" data-tab="import" type="button">账单导入</button>
+        <button class="tab-button" data-tab="reminders" type="button">还款提醒</button>
+      </nav>
+
+      <section class="tab-panel active" id="pendingPanel" data-panel="pending">
+        <div class="panel-heading">
+          <div>
+            <h2>待确认账单箱</h2>
+            <p>截图 OCR、银行短信、邮件、Apple Pay 和账单导入都会先来到这里。</p>
+          </div>
+          <button class="secondary" id="clearIgnoredButton" type="button">清理已忽略</button>
+        </div>
+        <div class="empty-state" id="pendingEmpty">没有待确认记录。</div>
+        <div class="record-list" id="pendingList"></div>
+      </section>
+
+      <section class="tab-panel" id="ledgerPanel" data-panel="ledger">
+        <div class="panel-heading">
+          <div>
+            <h2>正式账本</h2>
+            <p>只有你确认过的记录才会进入这里。</p>
+          </div>
+          <input class="search-input" id="ledgerSearch" type="search" placeholder="搜索商户、分类、备注" />
+        </div>
+        <div class="record-list" id="ledgerList"></div>
+      </section>
+
+      <section class="tab-panel" id="manualPanel" data-panel="manual">
+        <div class="panel-heading">
+          <div>
+            <h2>手动记账</h2>
+            <p>手动记录默认直接入账，也可以改成先放进待确认箱。</p>
+          </div>
+        </div>
+        <form class="form-grid" id="manualForm">
+          <label>
+            金额
+            <input name="amount" inputmode="decimal" required placeholder="35.00" />
+          </label>
+          <label>
+            收支
+            <select name="direction">
+              <option value="expense">支出</option>
+              <option value="income">收入</option>
+            </select>
+          </label>
+          <label>
+            时间
+            <input name="occurredAt" type="datetime-local" required />
+          </label>
+          <label>
+            渠道
+            <select name="channel">
+              <option value="微信">微信</option>
+              <option value="支付宝">支付宝</option>
+              <option value="Apple Pay">Apple Pay</option>
+              <option value="银行卡">银行卡</option>
+              <option value="现金">现金</option>
+              <option value="其他">其他</option>
+            </select>
+          </label>
+          <label>
+            商户/对象
+            <input name="merchant" required placeholder="例如 瑞幸咖啡" />
+          </label>
+          <label>
+            分类
+            <input name="category" list="categoryList" placeholder="餐饮" />
+          </label>
+          <label class="wide">
+            备注
+            <input name="note" placeholder="可选" />
+          </label>
+          <label class="inline-check wide">
+            <input name="pendingFirst" type="checkbox" />
+            先放进待确认箱
+          </label>
+          <button class="primary wide" type="submit">保存</button>
+        </form>
+      </section>
+
+      <section class="tab-panel" id="capturePanel" data-panel="capture">
+        <div class="panel-heading">
+          <div>
+            <h2>快捷入口</h2>
+            <p>iOS 快捷指令可以把短信、邮件、Apple Pay 或截图识别文本送到这里。</p>
+          </div>
+        </div>
+        <div class="split">
+          <form class="stack" id="textCaptureForm">
+            <label>
+              来源
+              <select name="source">
+                <option value="wechat_ocr">微信截图 OCR</option>
+                <option value="alipay_ocr">支付宝截图 OCR</option>
+                <option value="bank_message">银行短信</option>
+                <option value="bank_email">银行邮件</option>
+                <option value="apple_pay">Apple Pay 交易</option>
+              </select>
+            </label>
+            <label>
+              识别文本
+              <textarea name="text" rows="10" placeholder="把截图 OCR、短信或邮件正文粘贴到这里"></textarea>
+            </label>
+            <button class="primary" type="submit">解析到待确认箱</button>
+          </form>
+          <aside class="help-box">
+            <h3>快捷指令 URL 模板</h3>
+            <p>把下面的地址作为快捷指令里的“打开 URL”。其中 <code>text</code> 放短信、邮件或截图 OCR 文本。</p>
+            <pre id="shortcutUrlExample"></pre>
+            <p>所有通过 URL 进入的记录都会先进入待确认箱。你确认前可以修改金额、商户、分类和时间。</p>
+          </aside>
+        </div>
+      </section>
+
+      <section class="tab-panel" id="importPanel" data-panel="import">
+        <div class="panel-heading">
+          <div>
+            <h2>微信/支付宝账单导入</h2>
+            <p>导入文件不会直接覆盖已有记录，疑似重复会单独列出等待你处理。</p>
+          </div>
+        </div>
+        <div class="import-bar">
+          <label>
+            账单来源
+            <select id="importSource">
+              <option value="wechat_import">微信账单导入</option>
+              <option value="alipay_import">支付宝账单导入</option>
+            </select>
+          </label>
+          <label class="file-label primary">
+            选择 CSV/TXT
+            <input id="billInput" type="file" accept=".csv,.txt,text/csv,text/plain" />
+          </label>
+          <button class="secondary" id="importPreviewButton" type="button">导入预览</button>
+          <button class="primary" id="commitImportButton" type="button" disabled>加入待确认箱</button>
+        </div>
+        <div class="import-summary" id="importSummary">尚未选择文件。</div>
+        <div class="table-wrap">
+          <table id="importTable">
+            <thead>
+              <tr>
+                <th>状态</th>
+                <th>时间</th>
+                <th>金额</th>
+                <th>商户</th>
+                <th>分类</th>
+                <th>来源</th>
+              </tr>
+            </thead>
+            <tbody></tbody>
+          </table>
+        </div>
+      </section>
+
+      <section class="tab-panel" id="remindersPanel" data-panel="reminders">
+        <div class="panel-heading">
+          <div>
+            <h2>每月还款提醒</h2>
+            <p>网页通知只在 App 打开时最可靠；需要系统级提醒时可以导出日历文件。</p>
+          </div>
+          <button class="secondary" id="notificationButton" type="button">启用网页通知</button>
+        </div>
+        <form class="form-grid" id="reminderForm">
+          <label>
+            名称
+            <input name="title" required placeholder="例如 招行信用卡" />
+          </label>
+          <label>
+            每月几号
+            <input name="dayOfMonth" min="1" max="31" required type="number" value="10" />
+          </label>
+          <label>
+            提前提醒天数
+            <input name="advanceDays" min="0" max="15" type="number" value="3" />
+          </label>
+          <label>
+            预计金额
+            <input name="amount" inputmode="decimal" placeholder="可选" />
+          </label>
+          <label class="wide">
+            备注
+            <input name="note" placeholder="账单日、卡号尾号等" />
+          </label>
+          <button class="primary wide" type="submit">添加提醒</button>
+        </form>
+        <div class="record-list" id="reminderList"></div>
+      </section>
+    </main>
+
+    <datalist id="categoryList"></datalist>
+
+    <section class="editor hidden" id="editorPanel" aria-label="编辑待确认记录">
+      <form class="editor-card" id="editForm">
+        <div class="panel-heading compact">
+          <div>
+            <h2>修改待确认记录</h2>
+            <p>保存后会重新检查疑似重复。</p>
+          </div>
+          <button class="secondary" id="closeEditorButton" type="button">关闭</button>
+        </div>
+        <input name="id" type="hidden" />
+        <div class="form-grid">
+          <label>
+            金额
+            <input name="amount" inputmode="decimal" required />
+          </label>
+          <label>
+            收支
+            <select name="direction">
+              <option value="expense">支出</option>
+              <option value="income">收入</option>
+            </select>
+          </label>
+          <label>
+            时间
+            <input name="occurredAt" type="datetime-local" required />
+          </label>
+          <label>
+            渠道
+            <input name="channel" required />
+          </label>
+          <label>
+            商户/对象
+            <input name="merchant" required />
+          </label>
+          <label>
+            分类
+            <input name="category" list="categoryList" />
+          </label>
+          <label class="wide">
+            备注
+            <input name="note" />
+          </label>
+          <label class="wide">
+            原始文本
+            <textarea name="rawText" rows="5"></textarea>
+          </label>
+        </div>
+        <button class="primary" type="submit">保存修改</button>
+      </form>
+    </section>
+
+    <script src="app.js"></script>
+  </body>
+</html>
