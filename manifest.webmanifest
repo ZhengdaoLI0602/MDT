@@ -6,5 +6,21 @@
   "display": "standalone",
   "background_color": "#f8fafc",
   "theme_color": "#f8fafc",
+  "share_target": {
+    "action": "./index.html?shared=1",
+    "method": "POST",
+    "enctype": "multipart/form-data",
+    "params": {
+      "title": "title",
+      "text": "text",
+      "url": "url",
+      "files": [
+        {
+          "name": "screenshots",
+          "accept": ["image/*", ".png", ".jpg", ".jpeg", ".webp"]
+        }
+      ]
+    }
+  },
   "icons": []
 }

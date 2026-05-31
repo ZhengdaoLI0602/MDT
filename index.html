@@ -133,10 +133,30 @@
         <div class="panel-heading">
           <div>
             <h2>快捷入口</h2>
-            <p>iOS 快捷指令可以把短信、邮件、Apple Pay 或截图识别文本送到这里。</p>
+            <p>可以直接选择、粘贴或分享截图，也可以把短信、邮件、Apple Pay 或 OCR 文本送到这里。</p>
           </div>
         </div>
-        <div class="split">
+        <div class="capture-grid">
+          <form class="stack" id="screenshotOcrForm">
+            <label>
+              截图来源
+              <select id="screenshotSource" name="source">
+                <option value="wechat_ocr">微信截图</option>
+                <option value="alipay_ocr">支付宝截图</option>
+                <option value="ocr">其他截图</option>
+              </select>
+            </label>
+            <div class="screenshot-preview" id="screenshotPreview">尚未选择截图。</div>
+            <div class="screenshot-actions">
+              <label class="file-label secondary">
+                选择截图
+                <input id="screenshotInput" type="file" accept="image/*" />
+              </label>
+              <button class="secondary" id="screenshotPasteButton" type="button">读取剪贴板</button>
+              <button class="primary" id="screenshotOcrButton" type="submit" disabled>识别并加入待确认箱</button>
+            </div>
+            <p class="capture-status" id="screenshotOcrStatus">iPhone/iPad 推荐用快捷指令原生 OCR；这里的截图识别是浏览器内备用方案，首次使用会联网加载识别引擎。</p>
+          </form>
           <form class="stack" id="textCaptureForm">
             <label>
               来源
@@ -158,7 +178,9 @@
             <h3>快捷指令 URL 模板</h3>
             <p>把下面的地址作为快捷指令里的“打开 URL”。其中 <code>text</code> 放短信、邮件或截图 OCR 文本。</p>
             <pre id="shortcutUrlExample"></pre>
-            <p>所有通过 URL 进入的记录都会先进入待确认箱。你确认前可以修改金额、商户、分类和时间。</p>
+            <h3>iPhone/iPad 原生 OCR</h3>
+            <p>推荐做一个快捷指令：接收图片或最新截图 → 从图像中提取文本 → URL 编码 → 打开上面的地址。这样会用 iOS/iPadOS 自带 OCR，App 只负责解析并让你确认入账。</p>
+            <p>所有通过 URL、截图 OCR 或系统分享进入的记录都会先进入待确认箱。你确认前可以修改金额、商户、分类和时间。</p>
           </aside>
         </div>
       </section>

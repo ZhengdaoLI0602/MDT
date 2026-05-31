@@ -374,6 +374,16 @@ h3 {
   grid-template-columns: minmax(0, 1.25fr) minmax(280px, 0.75fr);
 }
 
+.capture-grid {
+  display: grid;
+  gap: 16px;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.capture-grid .help-box {
+  grid-column: 1 / -1;
+}
+
 .stack,
 .help-box {
   background: var(--panel);
@@ -402,6 +412,40 @@ pre {
   padding: 12px;
   white-space: pre-wrap;
   word-break: break-all;
+}
+
+.screenshot-preview {
+  align-items: center;
+  background: #f8fafc;
+  border: 1px dashed #cbd5e1;
+  border-radius: var(--radius);
+  color: var(--muted);
+  display: grid;
+  gap: 8px;
+  justify-items: center;
+  min-height: 180px;
+  overflow: hidden;
+  padding: 12px;
+  text-align: center;
+}
+
+.screenshot-preview img {
+  border-radius: 6px;
+  max-height: 280px;
+  max-width: 100%;
+  object-fit: contain;
+}
+
+.screenshot-preview span,
+.capture-status {
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.screenshot-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
 }
 
 .import-bar {
@@ -494,6 +538,7 @@ th {
 
   .summary-grid,
   .split,
+  .capture-grid,
   .form-grid {
     grid-template-columns: 1fr;
   }

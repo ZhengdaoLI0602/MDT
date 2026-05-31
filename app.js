@@ -1,5 +1,8 @@
 (() => {
   const STORAGE_KEY = "ledgerPilot.v1";
+  const OCR_SCRIPT_URL = "https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js";
+  const SHARE_DB_NAME = "ledgerPilot.shareTarget.v1";
+  const SHARE_STORE = "incomingScreenshots";
   const DEFAULT_CATEGORIES = ["餐饮", "交通", "购物", "生活缴费", "住房", "医疗", "学习", "娱乐", "旅行", "人情", "还款", "收入", "其他"];
   const DEFAULT_RULES = [
     { pattern: "美团|淘宝闪购|麦当劳|肯德基|星巴克|瑞幸|餐厅|饭|咖啡|奶茶", category: "餐饮" },
@@ -15,6 +18,10 @@
   let currentTab = "pending";
   let importPreview = [];
   let selectedImportFile = null;
+  let selectedScreenshotFile = null;
+  let selectedScreenshotUrl = "";
+  let screenshotBusy = false;
+  let ocrEnginePromise = null;
 
   const qs = (selector, root = document) => root.querySelector(selector);
   const qsa = (selector, root = document) => Array.from(root.querySelectorAll(selector));
@@ -26,6 +33,7 @@
     bindEvents();
     refreshCategoryList();
     handleUrlIntent();
+    handleShareTargetIntent();
     render();
     checkReminders();
     registerServiceWorker();
@@ -103,6 +111,23 @@
       render();
     });
 
+    qs("#screenshotInput").addEventListener("change", (event) => {
+      const file = event.target.files?.[0] || null;
+      if (file) setScreenshotFile(file);
+      event.target.value = "";
+    });
+    qs("#screenshotPasteButton").addEventListener("click", readClipboardScreenshot);
+    qs("#screenshotOcrForm").addEventListener("submit", async (event) => {
+      event.preventDefault();
+      if (!selectedScreenshotFile) {
+        toast("请先选择或粘贴一张截图。");
+        return;
+      }
+      const source = new FormData(event.currentTarget).get("source") || "ocr";
+      await recognizeScreenshotFile(selectedScreenshotFile, source);
+    });
+    document.addEventListener("paste", handleScreenshotPaste);
+
     qs("#billInput").addEventListener("change", (event) => {
       selectedImportFile = event.target.files?.[0] || null;
       qs("#importSummary").textContent = selectedImportFile ? `已选择：${selectedImportFile.name}` : "尚未选择文件。";
@@ -151,6 +176,7 @@
     renderTabs();
     renderSummary();
     renderShortcutExample();
+    renderScreenshotCapture();
     renderPending();
     renderLedger();
     renderReminders();
@@ -345,8 +371,213 @@
 
   function renderShortcutExample() {
     const base = location.href.split("?")[0].split("#")[0];
-    const example = `${base}?intent=bankMessage&text=${encodeURIComponent("招商银行 快捷支付支出 35.80 元 商户 瑞幸咖啡 支付宝")}`;
-    qs("#shortcutUrlExample").textContent = example;
+    qs("#shortcutUrlExample").textContent = [
+      `${base}?intent=wechatOcr&text=${encodeURIComponent("微信支付成功 ￥35.80 收款方 瑞幸咖啡")}`,
+      `${base}?intent=alipayOcr&text=${encodeURIComponent("支付宝 支付成功 ￥35.80 商户 瑞幸咖啡")}`,
+      `${base}?intent=bankMessage&text=${encodeURIComponent("招商银行 快捷支付支出 35.80 元 商户 瑞幸咖啡 支付宝")}`,
+    ].join("\n");
+  }
+
+  function renderScreenshotCapture() {
+    const preview = qs("#screenshotPreview");
+    const button = qs("#screenshotOcrButton");
+    if (!preview || !button) return;
+
+    if (selectedScreenshotFile && selectedScreenshotUrl) {
+      preview.innerHTML = `
+        <img alt="待识别截图预览" src="${selectedScreenshotUrl}" />
+        <span>${escapeHtml(selectedScreenshotFile.name || "截图")} · ${Math.round(selectedScreenshotFile.size / 1024)} KB</span>
+      `;
+    } else {
+      preview.textContent = "尚未选择截图。";
+    }
+
+    button.disabled = !selectedScreenshotFile || screenshotBusy;
+  }
+
+  function setScreenshotFile(file) {
+    if (!file || !String(file.type || "").startsWith("image/")) {
+      toast("请选择图片格式的截图。");
+      return false;
+    }
+
+    if (selectedScreenshotUrl) URL.revokeObjectURL(selectedScreenshotUrl);
+    selectedScreenshotFile = file;
+    selectedScreenshotUrl = URL.createObjectURL(file);
+    setOcrStatus("已读取截图。iPhone/iPad 上更推荐用快捷指令调用系统 OCR；这里的浏览器 OCR 作为备用。");
+    renderScreenshotCapture();
+    return true;
+  }
+
+  function setOcrStatus(message) {
+    const node = qs("#screenshotOcrStatus");
+    if (node) node.textContent = message;
+  }
+
+  function handleScreenshotPaste(event) {
+    const files = Array.from(event.clipboardData?.files || []);
+    const image = files.find((file) => String(file.type || "").startsWith("image/"));
+    if (!image) return;
+
+    event.preventDefault();
+    if (setScreenshotFile(image)) {
+      currentTab = "capture";
+      render();
+      toast("已粘贴截图，可以开始识别。");
+    }
+  }
+
+  async function readClipboardScreenshot() {
+    if (!navigator.clipboard?.read) {
+      toast("当前浏览器不能直接读取剪贴板图片，请用“选择截图”或 iOS 快捷指令。");
+      return;
+    }
+
+    try {
+      const items = await navigator.clipboard.read();
+      for (const item of items) {
+        const type = item.types.find((value) => value.startsWith("image/"));
+        if (!type) continue;
+        const blob = await item.getType(type);
+        const file = new File([blob], `clipboard-screenshot.${imageExtension(type)}`, { type });
+        if (setScreenshotFile(file)) toast("已读取剪贴板截图，可以开始识别。");
+        return;
+      }
+      toast("剪贴板里没有图片。");
+    } catch {
+      toast("没有获得剪贴板图片权限，请改用“选择截图”。");
+    }
+  }
+
+  async function recognizeScreenshotFile(file, source = "ocr") {
+    if (screenshotBusy) return;
+    screenshotBusy = true;
+    renderScreenshotCapture();
+
+    try {
+      setOcrStatus("正在加载浏览器 OCR 引擎。若在 iPhone/iPad 上频繁使用，建议改用快捷指令的系统 OCR 路线。");
+      const tesseract = await loadOcrEngine();
+      setOcrStatus("正在识别截图文字...");
+      const result = await tesseract.recognize(file, "chi_sim+eng", {
+        logger(message) {
+          if (message.status === "recognizing text" && Number.isFinite(message.progress)) {
+            setOcrStatus(`正在识别截图文字... ${Math.round(message.progress * 100)}%`);
+          }
+        },
+      });
+      const text = String(result?.data?.text || "").trim();
+      if (!text) {
+        setOcrStatus("没有从截图中识别到文字。");
+        toast("截图 OCR 没有识别到文字。");
+        return;
+      }
+
+      const record = parseFreeText(text, source);
+      addPending(record);
+      const textarea = qs("#textCaptureForm textarea[name='text']");
+      if (textarea) textarea.value = text;
+      currentTab = "pending";
+      setOcrStatus("已识别并加入待确认箱。");
+      toast("截图已识别，请在待确认箱确认入账。");
+      render();
+    } catch {
+      setOcrStatus("浏览器 OCR 失败。iPhone/iPad 上请使用快捷指令“从图像中提取文本”后打开本 app。");
+      toast("截图识别失败，请改用 iOS 快捷指令原生 OCR。");
+    } finally {
+      screenshotBusy = false;
+      renderScreenshotCapture();
+    }
+  }
+
+  function loadOcrEngine() {
+    if (window.Tesseract) return Promise.resolve(window.Tesseract);
+    if (ocrEnginePromise) return ocrEnginePromise;
+
+    ocrEnginePromise = new Promise((resolve, reject) => {
+      const script = document.createElement("script");
+      script.src = OCR_SCRIPT_URL;
+      script.async = true;
+      script.onload = () => window.Tesseract ? resolve(window.Tesseract) : reject(new Error("Tesseract unavailable"));
+      script.onerror = () => reject(new Error("Failed to load OCR engine"));
+      document.head.appendChild(script);
+    });
+
+    return ocrEnginePromise;
+  }
+
+  function imageExtension(type) {
+    if (/png/i.test(type)) return "png";
+    if (/webp/i.test(type)) return "webp";
+    if (/gif/i.test(type)) return "gif";
+    return "jpg";
+  }
+
+  function handleShareTargetIntent() {
+    const params = new URLSearchParams(location.search);
+    if (!params.has("shared")) return;
+
+    history.replaceState({}, document.title, location.pathname + location.hash);
+    currentTab = "capture";
+    readSharedScreenshots()
+      .then(async (items) => {
+        if (!items.length) {
+          toast("没有读取到分享的截图。");
+          render();
+          return;
+        }
+
+        render();
+        toast(`收到 ${items.length} 张分享截图，开始识别。`);
+        for (const item of items) {
+          const type = item.type || item.file?.type || "image/png";
+          const file = new File([item.file], item.name || `shared-screenshot.${imageExtension(type)}`, { type });
+          setScreenshotFile(file);
+          await recognizeScreenshotFile(file, item.source || "ocr");
+        }
+      })
+      .catch(() => {
+        toast("读取分享截图失败。");
+        render();
+      });
+  }
+
+  async function readSharedScreenshots() {
+    if (!("indexedDB" in window)) return [];
+    const db = await openShareDb();
+    const tx = db.transaction(SHARE_STORE, "readwrite");
+    const store = tx.objectStore(SHARE_STORE);
+    const items = await idbRequest(store.getAll());
+    store.clear();
+    await idbTransactionDone(tx);
+    db.close();
+    return items || [];
+  }
+
+  function openShareDb() {
+    return new Promise((resolve, reject) => {
+      const request = indexedDB.open(SHARE_DB_NAME, 1);
+      request.onupgradeneeded = () => {
+        const db = request.result;
+        if (!db.objectStoreNames.contains(SHARE_STORE)) db.createObjectStore(SHARE_STORE, { keyPath: "id" });
+      };
+      request.onsuccess = () => resolve(request.result);
+      request.onerror = () => reject(request.error);
+    });
+  }
+
+  function idbRequest(request) {
+    return new Promise((resolve, reject) => {
+      request.onsuccess = () => resolve(request.result);
+      request.onerror = () => reject(request.error);
+    });
+  }
+
+  function idbTransactionDone(tx) {
+    return new Promise((resolve, reject) => {
+      tx.oncomplete = () => resolve();
+      tx.onerror = () => reject(tx.error);
+      tx.onabort = () => reject(tx.error);
+    });
   }
 
   function handlePendingAction(event) {
@@ -753,6 +984,7 @@
   function extractAmount(text) {
     const cleaned = String(text || "").replace(/,/g, "");
     const patterns = [
+      /(?:付款金额|实付款|实付|订单金额|消费金额|收款金额|交易金额)[:：\s]*[¥￥]?\s*([0-9]+(?:\.[0-9]{1,2})?)\s*元?/i,
       /(?:支出|消费|扣款|付款|支付|交易|人民币|金额|CNY|RMB|¥|￥)\s*([0-9]+(?:\.[0-9]{1,2})?)\s*元?/i,
       /[¥￥]\s*([0-9]+(?:\.[0-9]{1,2})?)/,
       /([0-9]+(?:\.[0-9]{1,2})?)\s*元/,
@@ -768,6 +1000,9 @@
 
   function extractMerchant(text) {
     const raw = String(text || "");
+    const labeled = extractLabeledValue(raw, ["商户", "收款方", "交易对方", "对方", "商家", "店铺", "付款给", "收款账户"]);
+    if (labeled) return cleanMerchant(labeled);
+
     const patterns = [
       /(?:商户|收款方|交易对方|对方|商家|店铺)[:：\s]*([^\n，,。；;]+)/,
       /(?:向|给|在)\s*([^\n，,。；;]{2,24}?)(?:\s*支付|\s*付款|\s*消费|\s*支出)/,
@@ -781,11 +1016,35 @@
 
     const lines = raw.split(/\r?\n/).map(cleanCell).filter(Boolean);
     const candidate = lines.find((line) => {
-      if (/[0-9]{2,}|支出|收入|支付成功|付款成功|余额|银行卡|订单|交易|时间|金额|人民币|¥|￥|元/.test(line)) return false;
+      if (looksLikeMerchantNoise(line)) return false;
       return line.length >= 2 && line.length <= 28;
     });
 
     return cleanMerchant(candidate || "未识别商户");
+  }
+
+  function extractLabeledValue(raw, labels) {
+    const lines = String(raw || "").split(/\r?\n/).map(cleanCell).filter(Boolean);
+    for (let i = 0; i < lines.length; i += 1) {
+      const compact = lines[i].replace(/\s/g, "");
+      for (const label of labels) {
+        const sameLine = lines[i].match(new RegExp(`${label}\\s*[:：]?\\s*(.+)$`));
+        if (sameLine && sameLine[1] && !looksLikeMerchantNoise(sameLine[1])) return sameLine[1];
+        if (compact === label || compact.endsWith(label)) {
+          const next = lines.slice(i + 1).find((line) => !looksLikeMerchantNoise(line));
+          if (next) return next;
+        }
+      }
+    }
+    return "";
+  }
+
+  function looksLikeMerchantNoise(line) {
+    const value = cleanCell(line);
+    if (!value) return true;
+    if (/^[¥￥]\s*[0-9]+(?:\.[0-9]{1,2})?/.test(value)) return true;
+    if (/[0-9]{4}[-/.年]\d{1,2}[-/.月]\d{1,2}|[0-9]{1,2}:\d{2}/.test(value)) return true;
+    return /支出|收入|支付成功|付款成功|交易成功|余额|银行卡|订单|单号|交易|时间|金额|人民币|合计|优惠|收款方|付款方|商户|商家|店铺|支付方式|付款方式|完成|详情|账单|¥|￥|元/.test(value);
   }
 
   function extractDate(text) {
