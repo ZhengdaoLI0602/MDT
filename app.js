@@ -4,6 +4,7 @@
   const SHARE_DB_NAME = "ledgerPilot.shareTarget.v1";
   const SHARE_STORE = "incomingScreenshots";
   const DEFAULT_CATEGORIES = ["餐饮", "交通", "购物", "生活缴费", "住房", "医疗", "学习", "娱乐", "旅行", "人情", "还款", "收入", "其他"];
+  const QUICK_CATEGORIES = ["餐饮", "交通", "购物", "生活缴费", "医疗", "学习", "娱乐", "旅行", "人情", "还款", "其他"];
   const DEFAULT_RULES = [
     { pattern: "美团|淘宝闪购|麦当劳|肯德基|星巴克|瑞幸|餐厅|饭|咖啡|奶茶", category: "餐饮" },
     { pattern: "滴滴|高德|地铁|公交|铁路|航空|机票|停车|加油", category: "交通" },
@@ -32,6 +33,7 @@
     seedDemoDateFields();
     bindEvents();
     refreshCategoryList();
+    renderQuickCategoryChips();
     handleUrlIntent();
     handleShareTargetIntent();
     render();
@@ -139,6 +141,9 @@
     qs("#closeEditorButton").addEventListener("click", closeEditor);
     qs("#editForm").addEventListener("submit", saveEditedPending);
     qs("#ledgerSearch").addEventListener("input", renderLedger);
+    qs("#quickExpenseButton").addEventListener("click", () => openQuickExpense());
+    qs("#closeQuickExpenseButton").addEventListener("click", closeQuickExpense);
+    qs("#quickExpenseForm").addEventListener("submit", saveQuickExpense);
 
     qs("#reminderForm").addEventListener("submit", (event) => {
       event.preventDefault();
@@ -177,6 +182,7 @@
     renderSummary();
     renderShortcutExample();
     renderScreenshotCapture();
+    renderQuickCategoryChips();
     renderPending();
     renderLedger();
     renderReminders();
@@ -372,10 +378,86 @@
   function renderShortcutExample() {
     const base = location.href.split("?")[0].split("#")[0];
     qs("#shortcutUrlExample").textContent = [
+      `${base}?intent=quickExpense`,
       `${base}?intent=wechatOcr&text=${encodeURIComponent("微信支付成功 ￥35.80 收款方 瑞幸咖啡")}`,
       `${base}?intent=alipayOcr&text=${encodeURIComponent("支付宝 支付成功 ￥35.80 商户 瑞幸咖啡")}`,
       `${base}?intent=bankMessage&text=${encodeURIComponent("招商银行 快捷支付支出 35.80 元 商户 瑞幸咖啡 支付宝")}`,
     ].join("\n");
+  }
+
+  function renderQuickCategoryChips() {
+    const form = qs("#quickExpenseForm");
+    const chips = qs("#quickCategoryChips");
+    if (!form || !chips) return;
+
+    const selected = form.elements.category.value || QUICK_CATEGORIES[0];
+    chips.innerHTML = QUICK_CATEGORIES.map((category) => `
+      <button class="category-chip ${category === selected ? "active" : ""}" data-category="${escapeHtml(category)}" type="button">
+        ${escapeHtml(category)}
+      </button>
+    `).join("");
+
+    qsa("[data-category]", chips).forEach((button) => {
+      button.addEventListener("click", () => {
+        form.elements.category.value = button.dataset.category;
+        renderQuickCategoryChips();
+      });
+    });
+  }
+
+  function openQuickExpense(preset = {}) {
+    const form = qs("#quickExpenseForm");
+    form.reset();
+    form.elements.amount.value = preset.amount ? String(preset.amount) : "";
+    form.elements.channel.value = preset.channel || "微信";
+    form.elements.category.value = preset.category || QUICK_CATEGORIES[0];
+    form.elements.merchant.value = preset.merchant || "";
+    form.elements.occurredAt.value = toDateTimeLocalInput(preset.occurredAt || localDateTimeString(new Date()));
+    form.elements.note.value = preset.note || "";
+    renderQuickCategoryChips();
+    qs("#quickExpensePanel").classList.remove("hidden");
+    setTimeout(() => form.elements.amount.focus(), 0);
+  }
+
+  function closeQuickExpense() {
+    qs("#quickExpensePanel").classList.add("hidden");
+  }
+
+  function saveQuickExpense(event) {
+    event.preventDefault();
+    const form = event.currentTarget;
+    const amount = Math.abs(parseAmount(form.elements.amount.value));
+    if (amount <= 0) {
+      toast("请先填写金额。");
+      return;
+    }
+
+    const category = form.elements.category.value || QUICK_CATEGORIES[0];
+    const merchant = form.elements.merchant.value.trim() || category;
+    const record = normalizeRecord({
+      amount,
+      direction: "expense",
+      occurredAt: parseDate(form.elements.occurredAt.value) || localDateTimeString(new Date()),
+      channel: form.elements.channel.value || "其他",
+      merchant,
+      category,
+      note: form.elements.note.value.trim(),
+      source: "quick_expense",
+      rawText: "背部轻点快速记账",
+      status: "confirmed",
+      confidence: 1,
+    });
+
+    state.transactions.unshift({
+      ...record,
+      status: "confirmed",
+      confirmedAt: new Date().toISOString(),
+    });
+    saveState();
+    closeQuickExpense();
+    currentTab = "ledger";
+    render();
+    toast("已记录到本地账本。");
   }
 
   function renderScreenshotCapture() {
@@ -841,6 +923,20 @@
     if (!params.has("intent")) return;
 
     const intent = params.get("intent");
+    if (intent === "quickExpense" || intent === "quickAdd") {
+      openQuickExpense({
+        amount: parseAmount(params.get("amount")),
+        category: params.get("category") || "",
+        merchant: params.get("merchant") || "",
+        channel: params.get("channel") || "",
+        occurredAt: parseDate(params.get("time") || params.get("occurredAt")) || localDateTimeString(new Date()),
+        note: params.get("note") || "",
+      });
+      history.replaceState({}, document.title, location.pathname + location.hash);
+      toast("快速记账已打开。");
+      return;
+    }
+
     const sourceMap = {
       bankMessage: "bank_message",
       bankEmail: "bank_email",
@@ -1417,6 +1513,7 @@
       alipay_import: "支付宝账单导入",
       ocr: "截图 OCR",
       url: "快捷指令",
+      quick_expense: "快速记账",
     };
     return labels[source] || source || "未知来源";
   }

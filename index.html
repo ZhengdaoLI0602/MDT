@@ -15,6 +15,7 @@
         <h1>LedgerPilot</h1>
       </div>
       <div class="header-actions">
+        <button class="primary" id="quickExpenseButton" type="button">快速记账</button>
         <button class="secondary" id="exportJsonButton" type="button">导出备份</button>
         <label class="secondary file-label">
           导入备份
@@ -261,6 +262,53 @@
     </main>
 
     <datalist id="categoryList"></datalist>
+
+    <section class="editor hidden" id="quickExpensePanel" aria-label="快速记账">
+      <form class="editor-card" id="quickExpenseForm">
+        <div class="panel-heading compact">
+          <div>
+            <h2>快速记一笔</h2>
+            <p>适合 iPhone 背部轻点触发：填金额，选类型，确认后直接写入本地账本。</p>
+          </div>
+          <button class="secondary" id="closeQuickExpenseButton" type="button">关闭</button>
+        </div>
+        <div class="form-grid">
+          <label>
+            金额
+            <input name="amount" inputmode="decimal" required placeholder="35.00" />
+          </label>
+          <label>
+            支付方式
+            <select name="channel">
+              <option value="微信">微信</option>
+              <option value="支付宝">支付宝</option>
+              <option value="Apple Pay">Apple Pay</option>
+              <option value="银行卡">银行卡</option>
+              <option value="现金">现金</option>
+              <option value="其他">其他</option>
+            </select>
+          </label>
+          <label class="wide">
+            消费类型
+            <input name="category" type="hidden" value="餐饮" />
+            <div class="category-chips" id="quickCategoryChips"></div>
+          </label>
+          <label>
+            商户/对象
+            <input name="merchant" placeholder="可选，例如 瑞幸咖啡" />
+          </label>
+          <label>
+            时间
+            <input name="occurredAt" type="datetime-local" required />
+          </label>
+          <label class="wide">
+            备注
+            <input name="note" placeholder="可选" />
+          </label>
+        </div>
+        <button class="primary wide" type="submit">确认记录到本地账本</button>
+      </form>
+    </section>
 
     <section class="editor hidden" id="editorPanel" aria-label="编辑待确认记录">
       <form class="editor-card" id="editForm">
