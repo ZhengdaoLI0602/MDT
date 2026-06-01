@@ -268,7 +268,7 @@
         <div class="panel-heading compact">
           <div>
             <h2>快速记一笔</h2>
-            <p>适合 iPhone 背部轻点触发：填金额，选类型，确认后直接写入本地账本。</p>
+            <p>适合 iPhone 背部轻点触发：可由系统 OCR 自动带入金额、商户和时间，你补备注后确认入账。</p>
           </div>
           <button class="secondary" id="closeQuickExpenseButton" type="button">关闭</button>
         </div>
@@ -291,6 +291,8 @@
           <label class="wide">
             消费类型
             <input name="category" type="hidden" value="餐饮" />
+            <input name="source" type="hidden" value="quick_expense" />
+            <input name="rawText" type="hidden" />
             <div class="category-chips" id="quickCategoryChips"></div>
           </label>
           <label>

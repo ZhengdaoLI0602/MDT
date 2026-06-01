@@ -379,6 +379,7 @@
     const base = location.href.split("?")[0].split("#")[0];
     qs("#shortcutUrlExample").textContent = [
       `${base}?intent=quickExpense`,
+      `${base}?intent=screenExpense&text=${encodeURIComponent("微信支付成功 ￥35.80 收款方 瑞幸咖啡 2026-06-01 12:30")}`,
       `${base}?intent=wechatOcr&text=${encodeURIComponent("微信支付成功 ￥35.80 收款方 瑞幸咖啡")}`,
       `${base}?intent=alipayOcr&text=${encodeURIComponent("支付宝 支付成功 ￥35.80 商户 瑞幸咖啡")}`,
       `${base}?intent=bankMessage&text=${encodeURIComponent("招商银行 快捷支付支出 35.80 元 商户 瑞幸咖啡 支付宝")}`,
@@ -414,9 +415,11 @@
     form.elements.merchant.value = preset.merchant || "";
     form.elements.occurredAt.value = toDateTimeLocalInput(preset.occurredAt || localDateTimeString(new Date()));
     form.elements.note.value = preset.note || "";
+    form.elements.source.value = preset.source || "quick_expense";
+    form.elements.rawText.value = preset.rawText || "";
     renderQuickCategoryChips();
     qs("#quickExpensePanel").classList.remove("hidden");
-    setTimeout(() => form.elements.amount.focus(), 0);
+    setTimeout(() => (preset.amount ? form.elements.note : form.elements.amount).focus(), 0);
   }
 
   function closeQuickExpense() {
@@ -442,8 +445,8 @@
       merchant,
       category,
       note: form.elements.note.value.trim(),
-      source: "quick_expense",
-      rawText: "背部轻点快速记账",
+      source: form.elements.source.value || "quick_expense",
+      rawText: form.elements.rawText.value || "背部轻点快速记账",
       status: "confirmed",
       confidence: 1,
     });
@@ -934,6 +937,24 @@
       });
       history.replaceState({}, document.title, location.pathname + location.hash);
       toast("快速记账已打开。");
+      return;
+    }
+
+    if (["screenExpense", "screenOcrExpense", "quickExpenseOcr"].includes(intent)) {
+      const text = params.get("text") || params.toString();
+      const record = parseFreeText(text, "screen_ocr");
+      openQuickExpense({
+        amount: record.amount,
+        category: record.category,
+        merchant: record.merchant === "未识别商户" ? "" : record.merchant,
+        channel: record.channel,
+        occurredAt: record.occurredAt,
+        note: params.get("note") || "",
+        source: "screen_ocr",
+        rawText: text,
+      });
+      history.replaceState({}, document.title, location.pathname + location.hash);
+      toast(record.amount > 0 ? "已从当前屏幕识别消费信息，请补备注后确认。" : "已打开识别结果，请检查金额。");
       return;
     }
 
@@ -1514,6 +1535,7 @@
       ocr: "截图 OCR",
       url: "快捷指令",
       quick_expense: "快速记账",
+      screen_ocr: "屏幕 OCR 快速记账",
     };
     return labels[source] || source || "未知来源";
   }
