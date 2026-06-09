@@ -7,6 +7,7 @@
   const QUICK_CATEGORIES = ["餐饮", "交通", "购物", "生活缴费", "医疗", "学习", "娱乐", "旅行", "人情", "还款", "其他"];
   const DEFAULT_RULES = [
     { pattern: "美团|淘宝闪购|麦当劳|肯德基|星巴克|瑞幸|餐厅|饭|咖啡|奶茶", category: "餐饮" },
+    { pattern: "探鱼|烤鱼|火锅|小吃|外卖|Food|Restaurant|Dining|Meal", category: "餐饮" },
     { pattern: "滴滴|高德|地铁|公交|铁路|航空|机票|停车|加油", category: "交通" },
     { pattern: "淘宝|天猫|京东|拼多多|亚马逊|Apple Store|商店|超市", category: "购物" },
     { pattern: "水费|电费|燃气|移动|联通|电信|宽带|物业", category: "生活缴费" },
@@ -686,6 +687,11 @@
   function confirmPending(id) {
     const item = state.pending.find((record) => record.id === id);
     if (!item) return;
+    if (Number(item.amount || 0) <= 0) {
+      toast("金额未识别，请先补充金额。");
+      openEditor(id);
+      return;
+    }
     state.pending = state.pending.filter((record) => record.id !== id);
     state.transactions.unshift({
       ...item,
@@ -901,11 +907,13 @@
   }
 
   function parseFreeText(text, source = "free_text") {
-    const channel = detectChannel(text, source);
-    const merchant = extractMerchant(text);
-    const amount = extractAmount(text);
-    const occurredAt = extractDate(text) || localDateTimeString(new Date());
-    const direction = detectDirection(text);
+    const normalizedText = normalizeOcrText(text);
+    const pageMatch = parseKnownPaymentPage(normalizedText, source);
+    const channel = pageMatch.channel || detectChannel(normalizedText, source);
+    const merchant = pageMatch.merchant || extractMerchant(normalizedText);
+    const amount = pageMatch.amount || extractAmount(normalizedText);
+    const occurredAt = pageMatch.occurredAt || extractDate(normalizedText) || localDateTimeString(new Date());
+    const direction = pageMatch.direction || detectDirection(normalizedText);
 
     return normalizeRecord({
       amount,
@@ -913,11 +921,11 @@
       occurredAt,
       merchant,
       channel,
-      category: categorize(merchant || text),
-      note: "",
+      category: pageMatch.category || categorize(`${merchant} ${normalizedText}`),
+      note: amount > 0 ? "" : "金额未识别，请补充",
       source,
       rawText: text,
-      confidence: amount > 0 ? 0.72 : 0.35,
+      confidence: pageMatch.confidence || (amount > 0 ? 0.72 : 0.35),
     });
   }
 
@@ -1098,12 +1106,51 @@
     return { collection, id };
   }
 
+  function parseKnownPaymentPage(text, source) {
+    const normalized = normalizeOcrText(text);
+    if (isAlipayTransactionDetails(normalized, source)) {
+      const merchant = extractAlipayDetailsMerchant(normalized);
+      const amount = extractAmount(normalized);
+      return {
+        amount,
+        direction: detectDirection(normalized),
+        occurredAt: extractDate(normalized) || null,
+        merchant,
+        channel: "支付宝",
+        category: categorize(`${merchant} ${normalized}`),
+        confidence: amount > 0 && merchant ? 0.88 : 0.48,
+      };
+    }
+
+    return {};
+  }
+
+  function isAlipayTransactionDetails(text, source) {
+    const value = `${source || ""} ${text || ""}`;
+    return /alipay|支付宝|Huabei|花呗|Transaction Details|Transaction successful|Payment time|Acquirer/i.test(value);
+  }
+
+  function extractAlipayDetailsMerchant(text) {
+    const lines = ocrLines(text);
+    const successIndex = lines.findIndex((line) => /Transaction successful|交易成功|支付成功|付款成功/i.test(line));
+    const beforeSuccess = successIndex > 0 ? lines.slice(0, successIndex).reverse() : lines;
+    const candidate = beforeSuccess.find((line) => {
+      if (looksLikeMerchantNoise(line)) return false;
+      if (/^[\-−–—+¥￥\s]*[0-9]+(?:\.[0-9]{1,2})?$/.test(line)) return false;
+      return /[\u4e00-\u9fffA-Za-z]/.test(line) && compactOcrMerchant(line).length >= 2;
+    });
+
+    if (candidate) return cleanMerchant(candidate);
+    return extractLabeledValue(text, ["商户", "收款方", "交易对方", "对方", "商家", "店铺"]) || "未识别商户";
+  }
+
   function extractAmount(text) {
-    const cleaned = String(text || "").replace(/,/g, "");
+    const cleaned = normalizeOcrText(text).replace(/,/g, "");
     const patterns = [
+      /(?:^|\n)\s*[-−–—]\s*([0-9]+(?:\.[0-9]{1,2})?)\s*(?=\n|$)/m,
+      /[¥￥]\s*[-−–—]?\s*([0-9]+(?:\.[0-9]{1,2})?)/,
       /(?:付款金额|实付款|实付|订单金额|消费金额|收款金额|交易金额)[:：\s]*[¥￥]?\s*([0-9]+(?:\.[0-9]{1,2})?)\s*元?/i,
       /(?:支出|消费|扣款|付款|支付|交易|人民币|金额|CNY|RMB|¥|￥)\s*([0-9]+(?:\.[0-9]{1,2})?)\s*元?/i,
-      /[¥￥]\s*([0-9]+(?:\.[0-9]{1,2})?)/,
       /([0-9]+(?:\.[0-9]{1,2})?)\s*元/,
     ];
 
@@ -1116,7 +1163,7 @@
   }
 
   function extractMerchant(text) {
-    const raw = String(text || "");
+    const raw = normalizeOcrText(text);
     const labeled = extractLabeledValue(raw, ["商户", "收款方", "交易对方", "对方", "商家", "店铺", "付款给", "收款账户"]);
     if (labeled) return cleanMerchant(labeled);
 
@@ -1141,7 +1188,7 @@
   }
 
   function extractLabeledValue(raw, labels) {
-    const lines = String(raw || "").split(/\r?\n/).map(cleanCell).filter(Boolean);
+    const lines = ocrLines(raw);
     for (let i = 0; i < lines.length; i += 1) {
       const compact = lines[i].replace(/\s/g, "");
       for (const label of labels) {
@@ -1161,15 +1208,15 @@
     if (!value) return true;
     if (/^[¥￥]\s*[0-9]+(?:\.[0-9]{1,2})?/.test(value)) return true;
     if (/[0-9]{4}[-/.年]\d{1,2}[-/.月]\d{1,2}|[0-9]{1,2}:\d{2}/.test(value)) return true;
-    return /支出|收入|支付成功|付款成功|交易成功|余额|银行卡|订单|单号|交易|时间|金额|人民币|合计|优惠|收款方|付款方|商户|商家|店铺|支付方式|付款方式|完成|详情|账单|¥|￥|元/.test(value);
+    return /支出|收入|支付成功|付款成功|交易成功|余额|银行卡|订单|单号|交易|时间|金额|人民币|合计|优惠|收款方|付款方|商户|商家|店铺|支付方式|付款方式|完成|详情|账单|Transaction Details|Transaction successful|Payment time|Payment method|method|Item description|ltem description|Bonus|Acquirer|Order No|Merchant order|View all|Bill Management|Transactions Category|Labels|Tap to view|Huabei|立即|领取|积分|¥|￥|元/i.test(value);
   }
 
   function extractDate(text) {
-    const value = String(text || "");
+    const value = normalizeOcrText(text);
     const patterns = [
-      /(\d{4}[-/.年]\d{1,2}[-/.月]\d{1,2}[日]?\s+\d{1,2}:\d{2}(?::\d{2})?)/,
+      /(\d{4}[-/.年]\d{1,2}[-/.月]\d{1,2}[日]?\s+\d{1,2}[:：]\d{2}(?::\d{2})?)/,
       /(\d{4}[-/.年]\d{1,2}[-/.月]\d{1,2}[日]?)/,
-      /(\d{1,2}[-/.月]\d{1,2}[日]?\s+\d{1,2}:\d{2}(?::\d{2})?)/,
+      /(\d{1,2}[-/.月]\d{1,2}[日]?\s+\d{1,2}[:：]\d{2}(?::\d{2})?)/,
     ];
 
     for (const pattern of patterns) {
@@ -1181,7 +1228,8 @@
   }
 
   function detectDirection(value) {
-    const text = String(value || "");
+    const text = normalizeOcrText(value);
+    if (/(^|\n)\s*[-−–—]\s*[0-9]+(?:\.[0-9]{1,2})?/m.test(text)) return "expense";
     if (/收入|入账|收款|退款|退回|转入|\+/.test(text) && !/支出|付款|消费|扣款/.test(text)) return "income";
     return "expense";
   }
@@ -1209,7 +1257,7 @@
 
   function parseAmount(value) {
     if (value === null || value === undefined) return 0;
-    const match = String(value).replace(/,/g, "").match(/-?[0-9]+(?:\.[0-9]{1,2})?/);
+    const match = normalizeOcrText(value).replace(/,/g, "").match(/-?[0-9]+(?:\.[0-9]{1,2})?/);
     return match ? Math.abs(Number(match[0])) : 0;
   }
 
@@ -1217,7 +1265,7 @@
     if (!value) return null;
     if (value instanceof Date) return Number.isNaN(value.getTime()) ? null : localDateTimeString(value);
 
-    let text = String(value).trim();
+    let text = normalizeOcrText(value).trim();
     if (!text) return null;
     text = text
       .replace(/年/g, "-")
@@ -1255,14 +1303,40 @@
   }
 
   function cleanMerchant(value) {
-    return cleanCell(value)
+    return compactOcrMerchant(cleanCell(value))
       .replace(/^(商户|收款方|交易对方|对方|商家|店铺)[:：\s]*/, "")
       .replace(/\s*(微信支付|支付宝|财付通|Apple Pay|银行卡|快捷支付).*$/i, "")
       .replace(/\d{4}[-/.年]\d{1,2}[-/.月]\d{1,2}.*$/, "")
-      .replace(/[¥￥]?\s*[0-9]+(?:\.[0-9]{1,2})?\s*元?.*$/, "")
+      .replace(/[¥￥]\s*[0-9]+(?:\.[0-9]{1,2})?.*$/, "")
+      .replace(/\s+[0-9]+(?:\.[0-9]{1,2})?\s*元.*$/, "")
       .replace(/\s{2,}/g, " ")
       .trim()
       .slice(0, 80);
+  }
+
+  function normalizeOcrText(value) {
+    return String(value || "")
+      .replace(/[‐‑‒–—−]/g, "-")
+      .replace(/[：]/g, ":")
+      .replace(/\r/g, "\n")
+      .replace(/[ \t]+\n/g, "\n")
+      .replace(/\n{3,}/g, "\n\n")
+      .trim();
+  }
+
+  function ocrLines(value) {
+    return normalizeOcrText(value).split(/\n+/).map(cleanCell).filter(Boolean);
+  }
+
+  function compactOcrMerchant(value) {
+    return String(value || "")
+      .replace(/([\u4e00-\u9fff])\s+(?=[\u4e00-\u9fff])/g, "$1")
+      .replace(/([\u4e00-\u9fff])\s+(?=[A-Za-z0-9])/g, "$1")
+      .replace(/([A-Za-z0-9])\s+(?=[\u4e00-\u9fff])/g, "$1")
+      .replace(/\s*([:：·•])\s*/g, "$1")
+      .replace(/\s*([()（）])\s*/g, "$1")
+      .replace(/\s{2,}/g, " ")
+      .trim();
   }
 
   function preferBetter(a, b) {
