@@ -60,12 +60,22 @@
         transactions: Array.isArray(parsed.transactions) ? parsed.transactions : [],
         pending: Array.isArray(parsed.pending) ? parsed.pending : [],
         reminders: Array.isArray(parsed.reminders) ? parsed.reminders : [],
-        categoryRules: Array.isArray(parsed.categoryRules) ? parsed.categoryRules : DEFAULT_RULES,
+        categoryRules: mergeCategoryRules(parsed.categoryRules),
         settings: parsed.settings || {},
       };
     } catch {
       return fallback;
     }
+  }
+
+  function mergeCategoryRules(savedRules) {
+    const rules = Array.isArray(savedRules) ? savedRules.filter((rule) => rule?.pattern && rule?.category) : [];
+    const existing = new Set(rules.map((rule) => `${rule.pattern}=>${rule.category}`));
+    DEFAULT_RULES.forEach((rule) => {
+      const key = `${rule.pattern}=>${rule.category}`;
+      if (!existing.has(key)) rules.push(rule);
+    });
+    return rules;
   }
 
   function saveState() {
