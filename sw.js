@@ -1,4 +1,4 @@
-const CACHE_NAME = "ledger-pilot-v7";
+const CACHE_NAME = "ledger-pilot-v8";
 const ASSETS = ["./", "./index.html", "./styles.css", "./app.js", "./manifest.webmanifest"];
 const SHARE_DB_NAME = "ledgerPilot.shareTarget.v1";
 const SHARE_STORE = "incomingScreenshots";

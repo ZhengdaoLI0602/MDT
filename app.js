@@ -551,11 +551,20 @@
           }
         },
       });
-      const text = String(result?.data?.text || "").trim();
+      let text = String(result?.data?.text || "").trim();
       if (!text) {
         setOcrStatus("没有从截图中识别到文字。");
         toast("截图 OCR 没有识别到文字。");
         return;
+      }
+
+      if (extractAmount(text) <= 0) {
+        setOcrStatus("未在整图 OCR 中找到金额，正在裁剪金额区域二次识别...");
+        const amount = await recognizeAmountFromScreenshot(file, tesseract);
+        if (amount > 0) {
+          text = `${text}\n\n付款金额 ${amount.toFixed(2)}`;
+          setOcrStatus(`已通过金额区域二次识别得到 ${money(amount)}。`);
+        }
       }
 
       const record = parseFreeText(text, source);
@@ -589,6 +598,98 @@
     });
 
     return ocrEnginePromise;
+  }
+
+  async function recognizeAmountFromScreenshot(file, tesseract) {
+    const crops = await createAmountCrops(file);
+    let bestAmount = 0;
+
+    for (let i = 0; i < crops.length; i += 1) {
+      const crop = crops[i];
+      try {
+        const result = await tesseract.recognize(crop, "eng", {
+          tessedit_char_whitelist: "0123456789.,- ",
+          logger(message) {
+            if (message.status === "recognizing text" && Number.isFinite(message.progress)) {
+              const pct = Math.round(message.progress * 100);
+              setOcrStatus(`正在二次识别金额区域 ${i + 1}/${crops.length}... ${pct}%`);
+            }
+          },
+        });
+        const amount = extractAmountFromCropText(result?.data?.text || "");
+        if (amount > 0) return amount;
+        bestAmount = Math.max(bestAmount, amount);
+      } catch {
+        continue;
+      }
+    }
+
+    return bestAmount;
+  }
+
+  async function createAmountCrops(file) {
+    const image = await loadImage(file);
+    const regions = [
+      { x: 0.10, y: 0.16, w: 0.80, h: 0.22 },
+      { x: 0.18, y: 0.23, w: 0.64, h: 0.16 },
+      { x: 0.08, y: 0.05, w: 0.84, h: 0.32 },
+      { x: 0.08, y: 0.25, w: 0.84, h: 0.18 },
+    ];
+
+    return regions.map((region) => cropImageForOcr(image, region));
+  }
+
+  function loadImage(file) {
+    return new Promise((resolve, reject) => {
+      const url = URL.createObjectURL(file);
+      const image = new Image();
+      image.onload = () => {
+        URL.revokeObjectURL(url);
+        resolve(image);
+      };
+      image.onerror = () => {
+        URL.revokeObjectURL(url);
+        reject(new Error("Unable to load image"));
+      };
+      image.src = url;
+    });
+  }
+
+  function cropImageForOcr(image, region) {
+    const sourceX = Math.max(0, Math.round(image.naturalWidth * region.x));
+    const sourceY = Math.max(0, Math.round(image.naturalHeight * region.y));
+    const sourceW = Math.min(image.naturalWidth - sourceX, Math.round(image.naturalWidth * region.w));
+    const sourceH = Math.min(image.naturalHeight - sourceY, Math.round(image.naturalHeight * region.h));
+    const scale = 3;
+    const canvas = document.createElement("canvas");
+    canvas.width = sourceW * scale;
+    canvas.height = sourceH * scale;
+    const context = canvas.getContext("2d");
+    context.fillStyle = "#ffffff";
+    context.fillRect(0, 0, canvas.width, canvas.height);
+    context.drawImage(image, sourceX, sourceY, sourceW, sourceH, 0, 0, canvas.width, canvas.height);
+
+    const pixels = context.getImageData(0, 0, canvas.width, canvas.height);
+    for (let i = 0; i < pixels.data.length; i += 4) {
+      const gray = pixels.data[i] * 0.299 + pixels.data[i + 1] * 0.587 + pixels.data[i + 2] * 0.114;
+      const value = gray < 165 ? 0 : 255;
+      pixels.data[i] = value;
+      pixels.data[i + 1] = value;
+      pixels.data[i + 2] = value;
+    }
+    context.putImageData(pixels, 0, 0);
+    return canvas.toDataURL("image/png");
+  }
+
+  function extractAmountFromCropText(text) {
+    const normalized = normalizeOcrText(text).replace(/,/g, "");
+    const matches = Array.from(normalized.matchAll(/[+-]?\s*([0-9]{1,6}(?:\.[0-9]{1,2})?)/g))
+      .map((match) => Math.abs(Number(match[1])))
+      .filter((value) => Number.isFinite(value) && value > 0);
+
+    if (!matches.length) return 0;
+    const decimal = matches.find((value) => /\./.test(String(value)));
+    return decimal || matches.sort((a, b) => b - a)[0];
   }
 
   function imageExtension(type) {
